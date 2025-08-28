@@ -365,6 +365,10 @@ naver_client_secret = "여기에_네이버_시크릿"
         # 새로운 검색인지 확인
         if st.session_state.search_params != current_params:
             st.session_state.search_params = current_params
+            # 검색 조건들도 세션에 저장
+            st.session_state.last_location = location
+            st.session_state.last_category = category
+            st.session_state.last_product = product
             
             finder = LocalProductFinder()
             finder.setup_apis(kakao_api_key, naver_client_id, naver_client_secret)
@@ -421,6 +425,10 @@ naver_client_secret = "여기에_네이버_시크릿"
     if st.session_state.search_results is not None:
         places_with_confidence = st.session_state.search_results
         
+        # finder 객체 초기화 (결과 표시용)
+        finder = LocalProductFinder()
+        finder.setup_apis(kakao_api_key, naver_client_id, naver_client_secret)
+        
         # 결과 표시
         st.markdown(f"## 🎯 '{product}' 검색 결과")
         
@@ -446,8 +454,14 @@ naver_client_secret = "여기에_네이버_시크릿"
                 center_lat = float(places_with_confidence[0]['y'])
                 center_lng = float(places_with_confidence[0]['x'])
                 
-                map_obj = finder.create_map(places_with_confidence, center_lat, center_lng)
-                st_folium(map_obj, width=700, height=500, returned_objects=["last_object_clicked"])
+                # finder 객체가 있는지 확인
+                try:
+                    map_obj = finder.create_map(places_with_confidence, center_lat, center_lng)
+                    st_folium(map_obj, width=700, height=500, returned_objects=["last_object_clicked"])
+                except Exception as e:
+                    st.error(f"지도를 생성하는 중 오류가 발생했습니다: {str(e)}")
+                    # 대체 지도 표시
+                    st.info("📍 지도 표시 중 문제가 발생했습니다. 아래 상세 결과를 확인해주세요.")
         
         with tab2:
             st.markdown("### 📋 상세 결과")
@@ -471,10 +485,6 @@ naver_client_secret = "여기에_네이버_시크릿"
             if not filtered_places:
                 st.info("선택한 조건에 맞는 결과가 없습니다.")
             else:
-                # LocalProductFinder 인스턴스가 필요한 경우를 대비
-                if 'finder' not in locals():
-                    finder = LocalProductFinder()
-                    
                 for i, place in enumerate(filtered_places):
                     confidence = place['confidence']
                     
@@ -511,10 +521,6 @@ naver_client_secret = "여기에_네이버_시크릿"
                                     
         with tab3:
             st.markdown("### 📊 상세 데이터")
-            # LocalProductFinder 인스턴스가 필요한 경우를 대비
-            if 'finder' not in locals():
-                finder = LocalProductFinder()
-                
             # 결과 데이터프레임
             df = pd.DataFrame([
                 {
@@ -549,7 +555,7 @@ naver_client_secret = "여기에_네이버_시크릿"
             st.download_button(
                 label="📥 결과를 CSV로 다운로드",
                 data=csv,
-                file_name=f"{location}_{category}_{product}_검색결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                file_name=f"{st.session_state.get('last_location', 'unknown')}_{st.session_state.get('last_category', 'unknown')}_{st.session_state.get('last_product', 'unknown')}_검색결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 key="download_csv"
             )
