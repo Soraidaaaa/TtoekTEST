@@ -248,32 +248,82 @@ def main():
     st.markdown('<h1 class="main-header">🍯 지역 특산품 찾기</h1>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">원하는 특산품을 판매하는 가게를 똑똑하게 찾아보세요!</p>', unsafe_allow_html=True)
     
-    # 사이드바 - API 설정
-    st.sidebar.title("🔧 API 설정")
-    st.sidebar.markdown("### 필요한 API 키를 입력하세요")
+    # API 키 설정 (Secrets 또는 수동 입력)
+    def get_api_keys():
+        """Streamlit Secrets 또는 사용자 입력에서 API 키 가져오기"""
+        api_keys = {}
+        
+        # Secrets에서 API 키 가져오기 시도
+        try:
+            api_keys['kakao'] = st.secrets["api_keys"]["kakao_rest_api"]
+            api_keys['naver_id'] = st.secrets["api_keys"]["naver_client_id"]  
+            api_keys['naver_secret'] = st.secrets["api_keys"]["naver_client_secret"]
+            return api_keys, True
+        except:
+            # Secrets가 없으면 사용자 입력 받기
+            return {}, False
     
-    kakao_api_key = st.sidebar.text_input(
-        "카카오 REST API 키",
-        type="password",
-        help="https://developers.kakao.com/ 에서 발급받으세요"
-    )
+    # API 키 확인
+    api_keys, has_secrets = get_api_keys()
     
-    naver_client_id = st.sidebar.text_input(
-        "네이버 클라이언트 ID",
-        help="https://developers.naver.com/ 에서 발급받으세요"
-    )
-    
-    naver_client_secret = st.sidebar.text_input(
-        "네이버 클라이언트 시크릿",
-        type="password"
-    )
-    
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("""
-    **API 발급 방법:**
-    1. **카카오**: developers.kakao.com → 앱 생성 → REST API 키 복사
-    2. **네이버**: developers.naver.com → 애플리케이션 등록 → 검색 API 추가
-    """)
+    if has_secrets:
+        # Secrets가 있으면 간단한 상태 표시만
+        st.sidebar.success("✅ API 키가 자동으로 설정되었습니다")
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("""
+        **🔐 API 키 자동 설정됨**
+        - 카카오 REST API
+        - 네이버 검색 API
+        
+        설정을 변경하려면 `.streamlit/secrets.toml` 파일을 수정하세요.
+        """)
+        
+        kakao_api_key = api_keys['kakao']
+        naver_client_id = api_keys['naver_id']
+        naver_client_secret = api_keys['naver_secret']
+        
+    else:
+        # Secrets가 없으면 사용자 입력 받기
+        st.sidebar.title("🔧 API 설정")
+        st.sidebar.markdown("### 필요한 API 키를 입력하세요")
+        
+        kakao_api_key = st.sidebar.text_input(
+            "카카오 REST API 키",
+            type="password",
+            help="https://developers.kakao.com/ 에서 발급받으세요"
+        )
+        
+        naver_client_id = st.sidebar.text_input(
+            "네이버 클라이언트 ID",
+            help="https://developers.naver.com/ 에서 발급받으세요"
+        )
+        
+        naver_client_secret = st.sidebar.text_input(
+            "네이버 클라이언트 시크릿",
+            type="password"
+        )
+        
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("""
+        **💡 자동 설정 방법:**
+        1. `.streamlit/secrets.toml` 파일 생성
+        2. API 키를 파일에 저장
+        3. 다음부터 자동으로 로드됩니다!
+        
+        **API 발급 방법:**
+        - **카카오**: developers.kakao.com
+        - **네이버**: developers.naver.com
+        """)
+        
+        # Secrets 파일 설정 도움말
+        with st.sidebar.expander("📝 Secrets 설정 도움말"):
+            st.code("""
+# .streamlit/secrets.toml 파일 생성
+[api_keys]
+kakao_rest_api = "여기에_카카오_API키"
+naver_client_id = "여기에_네이버_클라이언트ID"  
+naver_client_secret = "여기에_네이버_시크릿"
+            """, language="toml")
     
     # 메인 검색 폼
     col1, col2, col3 = st.columns(3)
