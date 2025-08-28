@@ -301,59 +301,95 @@ def main():
         """)
         return
     
+    # 세션 상태 초기화
+    if 'search_results' not in st.session_state:
+        st.session_state.search_results = None
+    if 'search_params' not in st.session_state:
+        st.session_state.search_params = None
+    
     # 검색 실행
     if search_clicked and location and product:
-        finder = LocalProductFinder()
-        finder.setup_apis(kakao_api_key, naver_client_id, naver_client_secret)
+        # 검색 파라미터 저장
+        current_params = f"{location}_{category}_{product}"
         
-        with st.spinner("🔍 주변 가게를 검색하고 있습니다..."):
-            # 1단계: 장소 검색
-            places = finder.search_places_kakao(location, category)
+        # 새로운 검색인지 확인
+        if st.session_state.search_params != current_params:
+            st.session_state.search_params = current_params
             
-            if not places:
-                st.error("검색 결과가 없습니다. 위치나 카테고리를 다시 확인해주세요.")
-                return
+            finder = LocalProductFinder()
+            finder.setup_apis(kakao_api_key, naver_client_id, naver_client_secret)
             
-            st.success(f"📍 {len(places)}개의 {category}을(를) 찾았습니다!")
+            with st.spinner("🔍 주변 가게를 검색하고 있습니다..."):
+                # 1단계: 장소 검색
+                places = finder.search_places_kakao(location, category)
+                
+                if not places:
+                    st.error("검색 결과가 없습니다. 위치나 카테고리를 다시 확인해주세요.")
+                    st.session_state.search_results = None
+                    return
+                
+                st.success(f"📍 {len(places)}개의 {category}을(를) 찾았습니다!")
+            
+            # 2단계: 블로그 검색 및 신뢰도 계산
+            progress_container = st.container()
+            with progress_container:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                places_with_confidence = []
+                
+                for i, place in enumerate(places):
+                    status_text.text(f"📝 {place['place_name']}의 {product} 판매 정보를 확인 중... ({i+1}/{len(places)})")
+                    
+                    # 블로그 검색
+                    blog_data = finder.search_blogs_naver(place['place_name'], product)
+                    time.sleep(0.1)  # API 호출 제한 방지
+                    
+                    # 신뢰도 계산
+                    confidence, status = finder.calculate_confidence(
+                        blog_data, place['place_name'], product
+                    )
+                    
+                    place['confidence'] = confidence
+                    place['status'] = status
+                    place['blog_count'] = len(blog_data.get('items', []))
+                    
+                    places_with_confidence.append(place)
+                    progress_bar.progress((i + 1) / len(places))
+                
+                # 신뢰도순 정렬
+                places_with_confidence.sort(key=lambda x: x['confidence'], reverse=True)
+                
+                # 검색 결과를 세션 상태에 저장
+                st.session_state.search_results = places_with_confidence
+                
+                # 진행률 표시 정리
+                progress_bar.empty()
+                status_text.success(f"✅ 검색 완료! {len(places_with_confidence)}개 가게의 {product} 판매 정보를 확인했습니다.")
         
-        # 2단계: 블로그 검색 및 신뢰도 계산
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        places_with_confidence = []
-        
-        for i, place in enumerate(places):
-            status_text.text(f"📝 {place['place_name']}의 {product} 판매 정보를 확인 중...")
-            
-            # 블로그 검색
-            blog_data = finder.search_blogs_naver(place['place_name'], product)
-            time.sleep(0.1)  # API 호출 제한 방지
-            
-            # 신뢰도 계산
-            confidence, status = finder.calculate_confidence(
-                blog_data, place['place_name'], product
-            )
-            
-            place['confidence'] = confidence
-            place['status'] = status
-            place['blog_count'] = len(blog_data.get('items', []))
-            
-            places_with_confidence.append(place)
-            progress_bar.progress((i + 1) / len(places))
-        
-        # 신뢰도순 정렬
-        places_with_confidence.sort(key=lambda x: x['confidence'], reverse=True)
-        
-        status_text.empty()
-        progress_bar.empty()
+    # 검색 결과 표시 (세션 상태에서 가져옴)
+    if st.session_state.search_results is not None:
+        places_with_confidence = st.session_state.search_results
         
         # 결과 표시
         st.markdown(f"## 🎯 '{product}' 검색 결과")
         
-        # 지도와 결과 리스트를 나란히 표시
-        col_map, col_results = st.columns([1, 1])
+        # 요약 정보
+        high_conf = len([p for p in places_with_confidence if p['confidence'] >= 0.7])
+        medium_conf = len([p for p in places_with_confidence if p['confidence'] >= 0.4])
         
-        with col_map:
+        col_summary1, col_summary2, col_summary3 = st.columns(3)
+        with col_summary1:
+            st.metric("총 가게 수", len(places_with_confidence))
+        with col_summary2:
+            st.metric("판매 확실", f"{high_conf}개", delta="높은 신뢰도")
+        with col_summary3:
+            st.metric("판매 가능", f"{medium_conf}개", delta="보통 이상 신뢰도")
+        
+        # 탭으로 구분하여 표시
+        tab1, tab2, tab3 = st.tabs(["🗺️ 지도 보기", "📋 상세 결과", "📊 데이터 표"])
+        
+        with tab1:
             st.markdown("### 📍 지도에서 보기")
             # 중심점 계산 (첫 번째 결과 기준)
             if places_with_confidence:
@@ -361,57 +397,115 @@ def main():
                 center_lng = float(places_with_confidence[0]['x'])
                 
                 map_obj = finder.create_map(places_with_confidence, center_lat, center_lng)
-                st_folium(map_obj, width=500, height=400)
+                st_folium(map_obj, width=700, height=500, returned_objects=["last_object_clicked"])
         
-        with col_results:
+        with tab2:
             st.markdown("### 📋 상세 결과")
             
-            for place in places_with_confidence:
-                confidence = place['confidence']
+            # 신뢰도별 필터링
+            filter_confidence = st.selectbox(
+                "신뢰도 필터링",
+                ["전체", "높음 (70% 이상)", "보통 (40% 이상)", "낮음 (40% 미만)"],
+                key="confidence_filter"
+            )
+            
+            # 필터링 적용
+            filtered_places = places_with_confidence
+            if filter_confidence == "높음 (70% 이상)":
+                filtered_places = [p for p in places_with_confidence if p['confidence'] >= 0.7]
+            elif filter_confidence == "보통 (40% 이상)":
+                filtered_places = [p for p in places_with_confidence if p['confidence'] >= 0.4]
+            elif filter_confidence == "낮음 (40% 미만)":
+                filtered_places = [p for p in places_with_confidence if p['confidence'] < 0.4]
+            
+            if not filtered_places:
+                st.info("선택한 조건에 맞는 결과가 없습니다.")
+            else:
+                # LocalProductFinder 인스턴스가 필요한 경우를 대비
+                if 'finder' not in locals():
+                    finder = LocalProductFinder()
+                    
+                for i, place in enumerate(filtered_places):
+                    confidence = place['confidence']
+                    
+                    # 신뢰도에 따른 스타일 클래스
+                    if confidence >= 0.7:
+                        confidence_class = "confidence-high"
+                    elif confidence >= 0.4:
+                        confidence_class = "confidence-medium"
+                    else:
+                        confidence_class = "confidence-low"
+                    
+                    with st.container():
+                        st.markdown(f"""
+                        <div class="store-card">
+                            <div class="store-name">{i+1}. {place['place_name']}</div>
+                            <div class="store-info">📍 {place['address_name']}</div>
+                            <div class="store-info">📞 {place.get('phone', '전화번호 정보 없음')}</div>
+                            <div class="store-info">📝 블로그 언급 {place['blog_count']}회</div>
+                            <span class="{confidence_class}">신뢰도 {confidence:.1%}</span>
+                            <div class="store-info" style="margin-top: 0.5rem;">{place['status']}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # 가게별 추가 정보 (expander)
+                        with st.expander(f"{place['place_name']} 더보기"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write(f"**카테고리:** {place.get('category_name', '정보없음')}")
+                                st.write(f"**도로명주소:** {place.get('road_address_name', '정보없음')}")
+                            with col2:
+                                st.write(f"**거리:** {place.get('distance', '정보없음')}m")
+                                if place.get('place_url'):
+                                    st.write(f"**상세정보:** [카카오맵에서 보기]({place['place_url']})")
+                                    
+        with tab3:
+            st.markdown("### 📊 상세 데이터")
+            # LocalProductFinder 인스턴스가 필요한 경우를 대비
+            if 'finder' not in locals():
+                finder = LocalProductFinder()
                 
-                # 신뢰도에 따른 스타일 클래스
-                if confidence >= 0.7:
-                    confidence_class = "confidence-high"
-                elif confidence >= 0.4:
-                    confidence_class = "confidence-medium"
-                else:
-                    confidence_class = "confidence-low"
-                
-                st.markdown(f"""
-                <div class="store-card">
-                    <div class="store-name">{place['place_name']}</div>
-                    <div class="store-info">📍 {place['address_name']}</div>
-                    <div class="store-info">📞 {place.get('phone', '전화번호 정보 없음')}</div>
-                    <div class="store-info">📝 블로그 언급 {place['blog_count']}회</div>
-                    <span class="{confidence_class}">신뢰도 {confidence:.1%}</span>
-                    <div class="store-info" style="margin-top: 0.5rem;">{place['status']}</div>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        # 결과 데이터프레임
-        st.markdown("### 📊 상세 데이터")
-        df = pd.DataFrame([
-            {
-                '가게명': place['place_name'],
-                '주소': place['address_name'],
-                '전화번호': place.get('phone', '정보없음'),
-                '블로그 언급': f"{place['blog_count']}회",
-                '신뢰도': f"{place['confidence']:.1%}",
-                '상태': place['status']
-            }
-            for place in places_with_confidence
-        ])
-        
-        st.dataframe(df, use_container_width=True)
-        
-        # CSV 다운로드
-        csv = df.to_csv(index=False, encoding='utf-8-sig')
-        st.download_button(
-            label="📥 결과를 CSV로 다운로드",
-            data=csv,
-            file_name=f"{location}_{category}_{product}_검색결과.csv",
-            mime="text/csv"
-        )
+            # 결과 데이터프레임
+            df = pd.DataFrame([
+                {
+                    '순위': i + 1,
+                    '가게명': place['place_name'],
+                    '주소': place['address_name'],
+                    '전화번호': place.get('phone', '정보없음'),
+                    '블로그 언급': f"{place['blog_count']}회",
+                    '신뢰도': f"{place['confidence']:.1%}",
+                    '상태': place['status'].replace('✅', '').replace('⚠️', '').replace('❓', '').strip()
+                }
+                for i, place in enumerate(places_with_confidence)
+            ])
+            
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "순위": st.column_config.NumberColumn(width="small"),
+                    "신뢰도": st.column_config.ProgressColumn(
+                        width="medium",
+                        min_value=0,
+                        max_value=1,
+                        format="%.1f%%"
+                    )
+                }
+            )
+            
+            # CSV 다운로드
+            csv = df.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 결과를 CSV로 다운로드",
+                data=csv,
+                file_name=f"{location}_{category}_{product}_검색결과_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="download_csv"
+            )
+    
+    elif search_clicked:
+        st.info("검색 조건을 확인해주세요.")
 
 if __name__ == "__main__":
     main()
